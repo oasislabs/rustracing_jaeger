@@ -38,6 +38,7 @@
 use crate::constants;
 use crate::error;
 use crate::{Error, ErrorKind, Result};
+use percent_encoding::percent_decode;
 use rand;
 use rustracing;
 use rustracing::carrier::{
@@ -48,7 +49,6 @@ use rustracing::sampler::BoxSampler;
 use std::fmt;
 use std::io::{Read, Write};
 use std::str::{self, FromStr};
-use percent_encoding::percent_decode;
 
 /// Span.
 pub type Span = rustracing::span::Span<SpanContextState>;
