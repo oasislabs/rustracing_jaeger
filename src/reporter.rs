@@ -3,7 +3,7 @@
 //! [jaeger agent]: http://jaeger.readthedocs.io/en/latest/deployment/#agent
 use hostname;
 use rustracing::tag::Tag;
-use std::net::{SocketAddr, UdpSocket};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
 use thrift_codec::message::Message;
 use thrift_codec::{BinaryEncode, CompactEncode};
 
@@ -31,8 +31,8 @@ impl JaegerCompactReporter {
     /// Sets the address of the report destination agent to `addr`.
     ///
     /// The default address is `127.0.0.1:6831`.
-    pub fn set_agent_addr(&mut self, addr: SocketAddr) {
-        self.0.set_agent_addr(addr);
+    pub fn set_agent_addr(&mut self, addr: SocketAddr) -> Result<()> {
+        self.0.set_agent_addr(addr)
     }
 
     /// Adds `tag` to this service.
@@ -53,8 +53,8 @@ impl JaegerCompactReporter {
         track!(self.0.report(spans, |message| {
             let mut bytes = Vec::new();
             track!(message
-                .compact_encode(&mut bytes,)
-                .map_err(error::from_thrift_error,))?;
+                .compact_encode(&mut bytes)
+                .map_err(error::from_thrift_error))?;
             Ok(bytes)
         }))
     }
@@ -78,8 +78,8 @@ impl JaegerBinaryReporter {
     /// Sets the address of the report destination agent to `addr`.
     ///
     /// The default address is `127.0.0.1:6832`.
-    pub fn set_agent_addr(&mut self, addr: SocketAddr) {
-        self.0.set_agent_addr(addr);
+    pub fn set_agent_addr(&mut self, addr: SocketAddr) -> Result<()> {
+        track!(self.0.set_agent_addr(addr))
     }
 
     /// Adds `tag` to this service.
@@ -100,8 +100,8 @@ impl JaegerBinaryReporter {
         track!(self.0.report(spans, |message| {
             let mut bytes = Vec::new();
             track!(message
-                .binary_encode(&mut bytes,)
-                .map_err(error::from_thrift_error,))?;
+                .binary_encode(&mut bytes)
+                .map_err(error::from_thrift_error))?;
             Ok(bytes)
         }))
     }
@@ -115,12 +115,12 @@ struct JaegerReporter {
 }
 impl JaegerReporter {
     fn new(service_name: &str, port: u16) -> Result<Self> {
-        let socket = track!(UdpSocket::bind("0.0.0.0:0").map_err(error::from_io_error))?;
+        let agent = SocketAddr::from(([127, 0, 0, 1], port));
+        let socket = track!(udp_socket(agent))?;
         let process = jaeger::Process {
             service_name: service_name.to_owned(),
             tags: Vec::new(),
         };
-        let agent = SocketAddr::from(([127, 0, 0, 1], port));
         let mut this = JaegerReporter {
             socket,
             agent,
@@ -136,8 +136,11 @@ impl JaegerReporter {
         }
         Ok(this)
     }
-    fn set_agent_addr(&mut self, addr: SocketAddr) {
+    fn set_agent_addr(&mut self, addr: SocketAddr) -> Result<()> {
+        self.socket = track!(udp_socket(addr))?;
         self.agent = addr;
+
+        Ok(())
     }
     fn add_service_tag(&mut self, tag: Tag) {
         self.process.tags.push((&tag).into());
@@ -154,8 +157,19 @@ impl JaegerReporter {
         let bytes = track!(encode(message))?;
         track!(self
             .socket
-            .send_to(&bytes, self.agent,)
-            .map_err(error::from_io_error,))?;
+            .send_to(&bytes, self.agent)
+            .map_err(error::from_io_error))?;
         Ok(())
     }
+}
+
+fn udp_socket(agent: SocketAddr) -> Result<UdpSocket> {
+    track!(UdpSocket::bind({
+        if agent.is_ipv6() {
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0)), 0)
+        } else {
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0)
+        }
+    })
+    .map_err(error::from_io_error))
 }
